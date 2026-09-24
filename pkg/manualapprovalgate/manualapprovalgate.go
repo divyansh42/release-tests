@@ -604,17 +604,66 @@ func ensureUserKubeconfig(user string) string {
 }
 
 // useImpersonation returns true when running on a HyperShift cluster where
-// HTPasswd IDP cannot be configured. In that case we use --as=<user> instead
-// of per-user kubeconfigs obtained via oc login.
+// HTPasswd IDP cannot be configured. In that case we create per-user
+// kubeconfigs with the act-as field set for impersonation.
 func useImpersonation() bool {
 	return os.Getenv("MAG_USE_IMPERSONATION") == "true"
 }
 
-// runAsUser returns the args needed to impersonate a user or an env override
-// for a per-user kubeconfig, depending on the cluster type.
+// ensureImpersonationKubeconfig creates a kubeconfig for the given user by
+// copying the admin kubeconfig and setting the act-as (impersonate) field.
+// The act-as field is read by any client-go based tool (including opc).
+func ensureImpersonationKubeconfig(user string) string {
+	magUserKubeconfigsMu.Lock()
+	if v, ok := magUserKubeconfigs[user]; ok && strings.TrimSpace(v) != "" {
+		magUserKubeconfigsMu.Unlock()
+		return v
+	}
+	magUserKubeconfigsMu.Unlock()
+
+	adminKC := os.Getenv("KUBECONFIG")
+	if adminKC == "" {
+		home, _ := os.UserHomeDir()
+		adminKC = home + "/.kube/config"
+	}
+
+	src, err := os.ReadFile(adminKC)
+	if err != nil {
+		testsuit.T.Fail(fmt.Errorf("failed to read admin kubeconfig %s: %v", adminKC, err))
+	}
+
+	tmp, err := os.CreateTemp("", fmt.Sprintf("mag-kubeconfig-%s-", user))
+	if err != nil {
+		testsuit.T.Fail(fmt.Errorf("failed to create temp kubeconfig for %s: %v", user, err))
+	}
+	if _, err := tmp.Write(src); err != nil {
+		testsuit.T.Fail(fmt.Errorf("failed to write temp kubeconfig for %s: %v", user, err))
+	}
+	_ = tmp.Close()
+	kcPath := tmp.Name()
+
+	// Get the user entry name from the copied kubeconfig
+	userName := strings.TrimSpace(cmd.MustSucceed(
+		"kubectl", "config", "view", "--kubeconfig", kcPath,
+		"--minify", "-o", "jsonpath={.users[0].name}").Stdout())
+
+	// Set act-as (impersonate) field on that user entry
+	cmd.MustSucceed("kubectl", "config", "set",
+		"users."+userName+".act-as", user, "--kubeconfig", kcPath)
+
+	magUserKubeconfigsMu.Lock()
+	magUserKubeconfigs[user] = kcPath
+	magUserKubeconfigsMu.Unlock()
+	return kcPath
+}
+
+// runAsUser returns the env override for a per-user kubeconfig.
+// On HyperShift (impersonation mode), it creates a kubeconfig with act-as set.
+// On regular clusters, it uses password-based oc login.
 func runAsUser(user string) (extraArgs []string, env []string) {
 	if useImpersonation() {
-		return []string{"--as=" + user}, nil
+		kc := ensureImpersonationKubeconfig(user)
+		return nil, []string{"KUBECONFIG=" + kc}
 	}
 	kc := ensureUserKubeconfig(user)
 	return nil, []string{"KUBECONFIG=" + kc}
