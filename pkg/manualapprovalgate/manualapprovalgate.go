@@ -611,12 +611,18 @@ func useImpersonation() bool {
 }
 
 // ensureImpersonationKubeconfig creates a kubeconfig for the given user by
-// copying the admin kubeconfig and setting the act-as (impersonate) field.
+// copying the admin kubeconfig and setting act-as + act-as-groups fields.
 // The act-as field is read by any client-go based tool (including opc).
+// act-as-groups must include the user's OpenShift Group memberships because
+// the opc CLI resolves groups via SelfSubjectReview, which only returns
+// groups from the impersonation headers, not from OpenShift Group CRDs.
 func ensureImpersonationKubeconfig(user string) string {
 	magUserKubeconfigsMu.Lock()
 	if v, ok := magUserKubeconfigs[user]; ok && strings.TrimSpace(v) != "" {
 		magUserKubeconfigsMu.Unlock()
+		if popUserAuthDirty(user) {
+			writeImpersonationKubeconfig(v, user)
+		}
 		return v
 	}
 	magUserKubeconfigsMu.Unlock()
@@ -642,19 +648,42 @@ func ensureImpersonationKubeconfig(user string) string {
 	_ = tmp.Close()
 	kcPath := tmp.Name()
 
-	// Get the user entry name from the copied kubeconfig
-	userName := strings.TrimSpace(cmd.MustSucceed(
-		"kubectl", "config", "view", "--kubeconfig", kcPath,
-		"--minify", "-o", "jsonpath={.users[0].name}").Stdout())
-
-	// Set act-as (impersonate) field on that user entry
-	cmd.MustSucceed("kubectl", "config", "set",
-		"users."+userName+".act-as", user, "--kubeconfig", kcPath)
+	writeImpersonationKubeconfig(kcPath, user)
 
 	magUserKubeconfigsMu.Lock()
 	magUserKubeconfigs[user] = kcPath
 	magUserKubeconfigsMu.Unlock()
+	_ = popUserAuthDirty(user)
 	return kcPath
+}
+
+// writeImpersonationKubeconfig sets act-as and act-as-groups on the kubeconfig.
+func writeImpersonationKubeconfig(kcPath, user string) {
+	// Get the user entry name from the kubeconfig
+	userName := strings.TrimSpace(cmd.MustSucceed(
+		"kubectl", "config", "view", "--kubeconfig", kcPath,
+		"--minify", "-o", "jsonpath={.users[0].name}").Stdout())
+
+	// Set act-as (impersonate user)
+	cmd.MustSucceed("kubectl", "config", "set",
+		"users."+userName+".act-as", user, "--kubeconfig", kcPath)
+
+	// Look up which OpenShift Groups this user belongs to and set act-as-groups.
+	// This uses the admin kubeconfig (not the impersonation one) to query groups.
+	groupsOut := strings.TrimSpace(cmd.Run(
+		"bash", "-c",
+		fmt.Sprintf(`oc get groups -o go-template='{{range .items}}{{$name := .metadata.name}}{{range .users}}{{if eq . "%s"}}{{$name}} {{end}}{{end}}{{end}}'`, user)).Stdout())
+
+	if groupsOut != "" {
+		groups := strings.Fields(groupsOut)
+		// kubectl config set doesn't support list values for act-as-groups,
+		// so we write it by unsetting first then setting each group via config set.
+		// Actually, act-as-groups is a list in kubeconfig YAML. We can set it
+		// as a JSON array using kubectl config set.
+		groupsJSON := "[\"" + strings.Join(groups, "\",\"") + "\"]"
+		cmd.MustSucceed("kubectl", "config", "set",
+			"users."+userName+".act-as-groups", groupsJSON, "--kubeconfig", kcPath)
+	}
 }
 
 // runAsUser returns the env override for a per-user kubeconfig.
