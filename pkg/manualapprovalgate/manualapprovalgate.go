@@ -169,12 +169,13 @@ func popUserAuthDirty(user string) bool {
 	return dirty
 }
 
+// userPassword is no longer needed — SA token / impersonation auth is used on HyperShift clusters.
+// Kept as a no-op for backward compatibility in case any external code references it.
 func userPassword(user string) string {
 	envVar := strings.ToUpper(user) + "_PASS"
 	if v := strings.TrimSpace(os.Getenv(envVar)); v != "" {
 		return v
 	}
-	// default: password == username
 	return user
 }
 
@@ -568,11 +569,12 @@ func ensureMAGAPIServer() string {
 	return magAPIServer
 }
 
+// ensureUserKubeconfig is kept for backward compatibility but is no longer the
+// primary auth path on HyperShift clusters. See runAsUser() below.
 func ensureUserKubeconfig(user string) string {
 	magUserKubeconfigsMu.Lock()
 	if v, ok := magUserKubeconfigs[user]; ok && strings.TrimSpace(v) != "" {
 		magUserKubeconfigsMu.Unlock()
-		// If group membership changed since the last login, refresh the token so group-based approvers work.
 		if popUserAuthDirty(user) {
 			apiServer := ensureMAGAPIServer()
 			pass := userPassword(user)
@@ -597,9 +599,25 @@ func ensureUserKubeconfig(user string) string {
 	magUserKubeconfigsMu.Lock()
 	magUserKubeconfigs[user] = kcPath
 	magUserKubeconfigsMu.Unlock()
-	// Fresh login done; clear dirty flag if it was set.
 	_ = popUserAuthDirty(user)
 	return kcPath
+}
+
+// useImpersonation returns true when running on a HyperShift cluster where
+// HTPasswd IDP cannot be configured. In that case we use --as=<user> instead
+// of per-user kubeconfigs obtained via oc login.
+func useImpersonation() bool {
+	return os.Getenv("MAG_USE_IMPERSONATION") == "true"
+}
+
+// runAsUser returns the args needed to impersonate a user or an env override
+// for a per-user kubeconfig, depending on the cluster type.
+func runAsUser(user string) (extraArgs []string, env []string) {
+	if useImpersonation() {
+		return []string{"--as=" + user}, nil
+	}
+	kc := ensureUserKubeconfig(user)
+	return nil, []string{"KUBECONFIG=" + kc}
 }
 
 // CleanupUserKubeconfigs removes any temp kubeconfig files created for per-user logins.
@@ -621,42 +639,46 @@ func CleanupUserKubeconfigs() {
 }
 
 func ApproveApprovalTaskAsUser(user, task, namespace, message string) {
-	kc := ensureUserKubeconfig(user)
+	extraArgs, env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "approve", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	cmd.MustSucceedWithEnv([]string{"KUBECONFIG=" + kc}, args...)
+	args = append(args, extraArgs...)
+	cmd.MustSucceedWithEnv(env, args...)
 }
 
 func RejectApprovalTaskAsUser(user, task, namespace, message string) {
-	kc := ensureUserKubeconfig(user)
+	extraArgs, env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "reject", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	cmd.MustSucceedWithEnv([]string{"KUBECONFIG=" + kc}, args...)
+	args = append(args, extraArgs...)
+	cmd.MustSucceedWithEnv(env, args...)
 }
 
 func ApproveApprovalTaskExpectFailAsUser(user, task, namespace, message string) {
-	kc := ensureUserKubeconfig(user)
+	extraArgs, env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "approve", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	res := cmd.RunWithEnv([]string{"KUBECONFIG=" + kc}, args...)
+	args = append(args, extraArgs...)
+	res := cmd.RunWithEnv(env, args...)
 	if res.ExitCode == 0 {
 		testsuit.T.Fail(fmt.Errorf("expected approval by %s on %s to fail, but it succeeded", user, task))
 	}
 }
 
 func ApproveApprovalTaskAllowFinalStateAsUser(user, task, namespace, message string) {
-	kc := ensureUserKubeconfig(user)
+	extraArgs, env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "approve", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	res := cmd.RunWithEnv([]string{"KUBECONFIG=" + kc}, args...)
+	args = append(args, extraArgs...)
+	res := cmd.RunWithEnv(env, args...)
 	if res.ExitCode == 0 {
 		return
 	}
