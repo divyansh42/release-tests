@@ -38,6 +38,8 @@ import (
 	mag "github.com/tektoncd/operator/pkg/client/clientset/versioned/typed/operator/v1alpha1"
 	"github.com/tektoncd/operator/test/utils"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -657,32 +659,39 @@ func ensureImpersonationKubeconfig(user string) string {
 	return kcPath
 }
 
-// writeImpersonationKubeconfig sets act-as and act-as-groups on the kubeconfig.
+// writeImpersonationKubeconfig sets Impersonate and ImpersonateGroups on the kubeconfig.
 func writeImpersonationKubeconfig(kcPath, user string) {
-	// Get the user entry name from the kubeconfig
-	userName := strings.TrimSpace(cmd.MustSucceed(
-		"kubectl", "config", "view", "--kubeconfig", kcPath,
-		"--minify", "-o", "jsonpath={.users[0].name}").Stdout())
+	cfg, err := clientcmd.LoadFromFile(kcPath)
+	if err != nil {
+		testsuit.T.Fail(fmt.Errorf("failed to load kubeconfig %s: %v", kcPath, err))
+	}
 
-	// Set act-as (impersonate user)
-	cmd.MustSucceed("kubectl", "config", "set",
-		"users."+userName+".act-as", user, "--kubeconfig", kcPath)
+	// Find the AuthInfo for the current context
+	ctx, ok := cfg.Contexts[cfg.CurrentContext]
+	if !ok {
+		testsuit.T.Fail(fmt.Errorf("current context %s not found in kubeconfig", cfg.CurrentContext))
+	}
+	authInfo, ok := cfg.AuthInfos[ctx.AuthInfo]
+	if !ok {
+		authInfo = clientcmdapi.NewAuthInfo()
+		cfg.AuthInfos[ctx.AuthInfo] = authInfo
+	}
 
-	// Look up which OpenShift Groups this user belongs to and set act-as-groups.
-	// This uses the admin kubeconfig (not the impersonation one) to query groups.
+	authInfo.Impersonate = user
+
+	// Look up which OpenShift Groups this user belongs to.
 	groupsOut := strings.TrimSpace(cmd.Run(
 		"bash", "-c",
 		fmt.Sprintf(`oc get groups -o go-template='{{range .items}}{{$name := .metadata.name}}{{range .users}}{{if eq . "%s"}}{{$name}} {{end}}{{end}}{{end}}'`, user)).Stdout())
 
 	if groupsOut != "" {
-		groups := strings.Fields(groupsOut)
-		// kubectl config set doesn't support list values for act-as-groups,
-		// so we write it by unsetting first then setting each group via config set.
-		// Actually, act-as-groups is a list in kubeconfig YAML. We can set it
-		// as a JSON array using kubectl config set.
-		groupsJSON := "[\"" + strings.Join(groups, "\",\"") + "\"]"
-		cmd.MustSucceed("kubectl", "config", "set",
-			"users."+userName+".act-as-groups", groupsJSON, "--kubeconfig", kcPath)
+		authInfo.ImpersonateGroups = strings.Fields(groupsOut)
+	} else {
+		authInfo.ImpersonateGroups = nil
+	}
+
+	if err := clientcmd.WriteToFile(*cfg, kcPath); err != nil {
+		testsuit.T.Fail(fmt.Errorf("failed to write kubeconfig %s: %v", kcPath, err))
 	}
 }
 
