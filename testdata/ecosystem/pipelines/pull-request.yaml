@@ -46,7 +46,7 @@ spec:
       - name: pr
       steps: 
         - name: count-comments
-          image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+          image: registry.access.redhat.com/ubi9/ubi:latest
           script: | 
             #!/usr/bin/env bash
             set -xe

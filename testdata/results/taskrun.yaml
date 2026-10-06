@@ -7,7 +7,7 @@ spec:
   taskSpec:
     steps:
     - name: hello-goodbye-results
-      image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+      image: registry.access.redhat.com/ubi9/ubi:latest
       script: |-
         #!/usr/bin/env sh
         echo "Hello, Results!"

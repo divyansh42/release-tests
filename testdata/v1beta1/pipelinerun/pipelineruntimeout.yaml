@@ -9,7 +9,7 @@ spec:
         - sleep 100
       command:
         - /bin/sh
-      image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+      image: registry.access.redhat.com/ubi9/ubi:latest
       name: ''
       resources: {}
 ---

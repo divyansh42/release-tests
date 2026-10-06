@@ -36,7 +36,7 @@ spec:
     - name: OUTPUT_PATH
       value: $(workspaces.output.path)
   - name: validate-revision-sha
-    image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+    image: registry.access.redhat.com/ubi9/ubi:latest
     env:
       - name: RESULT_COMMIT
         value: $(steps.fetch-repository.results.COMMIT)

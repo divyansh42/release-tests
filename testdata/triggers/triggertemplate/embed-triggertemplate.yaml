@@ -28,7 +28,7 @@ spec:
                   default: "Hello World!"
                 steps:
                   - name: echo
-                    image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+                    image: registry.access.redhat.com/ubi9/ubi:latest
                     script: |
                       #!/usr/bin/env bash
                       echo "$(tt.params.MESSAGE)"

@@ -7,6 +7,6 @@ spec:
   taskSpec:
     steps:
     - name: hell-world
-      image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+      image: registry.access.redhat.com/ubi9/ubi:latest
       script: |
         echo "Hello, world"

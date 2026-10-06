@@ -8,7 +8,7 @@ spec:
       description: The Content-Type of the event
   steps:
     - name: say-hi
-      image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+      image: registry.access.redhat.com/ubi9/ubi:latest
       command: ["bash", "-c"]
       args:
         - echo -e 'Hello Triggers!\nContent-Type is $(params.contenttype)'
@@ -24,7 +24,7 @@ spec:
     default: This is the default message
   steps:
   - name: say-message
-    image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+    image: registry.access.redhat.com/ubi9/ubi:latest
     command: ["bash", "-c"]
     args:
       - echo '$(params.message)'
@@ -36,7 +36,7 @@ metadata:
 spec:
   steps:
   - name: say-bye
-    image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+    image: registry.access.redhat.com/ubi9/ubi:latest
     command: ["bash", "-c"]
     args:
     - echo 'Goodbye Triggers!'

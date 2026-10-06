@@ -8,7 +8,7 @@ spec:
     - name: damnworkspace
   steps:
     - name: write-new-stuff
-      image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+      image: registry.access.redhat.com/ubi9/ubi:latest
       command: ['bash']
       args: ['-c', 'echo some stuff > /workspace/damnworkspace/stuff']
 ---
@@ -25,7 +25,7 @@ spec:
     - name: newworkspace
   steps:
   - name: read
-    image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+    image: registry.access.redhat.com/ubi9/ubi:latest
     command: ["/bin/bash"]
     args: ['$(inputs.params.args[*])']  # tests that new targetpath and previous task output is dumped
 ---

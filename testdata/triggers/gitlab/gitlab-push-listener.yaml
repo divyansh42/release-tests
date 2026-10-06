@@ -44,7 +44,7 @@ spec:
             - name: print-params
               taskSpec:
                 steps:
-                  - image: image-registry.openshift-image-registry.svc:5000/openshift/golang
+                  - image: registry.access.redhat.com/ubi9/ubi:latest
                     script: |
                       #! /bin/bash
                       echo "git revision: $(tt.params.gitrevision)"
