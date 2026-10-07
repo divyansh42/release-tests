@@ -171,8 +171,9 @@ func popUserAuthDirty(user string) bool {
 	return dirty
 }
 
-// userPassword is no longer needed — SA token / impersonation auth is used on HyperShift clusters.
-// Kept as a no-op for backward compatibility in case any external code references it.
+// userPassword returns the password for a user, used on non-HyperShift clusters
+// where password-based oc login is available. On HyperShift, impersonation is
+// used instead (see useImpersonation / ensureImpersonationKubeconfig).
 func userPassword(user string) string {
 	envVar := strings.ToUpper(user) + "_PASS"
 	if v := strings.TrimSpace(os.Getenv(envVar)); v != "" {
@@ -695,16 +696,14 @@ func writeImpersonationKubeconfig(kcPath, user string) {
 	}
 }
 
-// runAsUser returns the env override for a per-user kubeconfig.
+// runAsUser returns a KUBECONFIG env override for the given user.
 // On HyperShift (impersonation mode), it creates a kubeconfig with act-as set.
 // On regular clusters, it uses password-based oc login.
-func runAsUser(user string) (extraArgs []string, env []string) {
+func runAsUser(user string) []string {
 	if useImpersonation() {
-		kc := ensureImpersonationKubeconfig(user)
-		return nil, []string{"KUBECONFIG=" + kc}
+		return []string{"KUBECONFIG=" + ensureImpersonationKubeconfig(user)}
 	}
-	kc := ensureUserKubeconfig(user)
-	return nil, []string{"KUBECONFIG=" + kc}
+	return []string{"KUBECONFIG=" + ensureUserKubeconfig(user)}
 }
 
 // CleanupUserKubeconfigs removes any temp kubeconfig files created for per-user logins.
@@ -726,32 +725,29 @@ func CleanupUserKubeconfigs() {
 }
 
 func ApproveApprovalTaskAsUser(user, task, namespace, message string) {
-	extraArgs, env := runAsUser(user)
+	env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "approve", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	args = append(args, extraArgs...)
 	cmd.MustSucceedWithEnv(env, args...)
 }
 
 func RejectApprovalTaskAsUser(user, task, namespace, message string) {
-	extraArgs, env := runAsUser(user)
+	env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "reject", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	args = append(args, extraArgs...)
 	cmd.MustSucceedWithEnv(env, args...)
 }
 
 func ApproveApprovalTaskExpectFailAsUser(user, task, namespace, message string) {
-	extraArgs, env := runAsUser(user)
+	env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "approve", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	args = append(args, extraArgs...)
 	res := cmd.RunWithEnv(env, args...)
 	if res.ExitCode == 0 {
 		testsuit.T.Fail(fmt.Errorf("expected approval by %s on %s to fail, but it succeeded", user, task))
@@ -759,12 +755,11 @@ func ApproveApprovalTaskExpectFailAsUser(user, task, namespace, message string) 
 }
 
 func ApproveApprovalTaskAllowFinalStateAsUser(user, task, namespace, message string) {
-	extraArgs, env := runAsUser(user)
+	env := runAsUser(user)
 	args := []string{"opc", "approvaltask", "approve", task, "-n", namespace}
 	if strings.TrimSpace(message) != "" {
 		args = append(args, "-m", message)
 	}
-	args = append(args, extraArgs...)
 	res := cmd.RunWithEnv(env, args...)
 	if res.ExitCode == 0 {
 		return
